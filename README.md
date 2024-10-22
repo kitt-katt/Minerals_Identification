@@ -17,4 +17,4 @@ masOS / linux:
 
 Далее устанавливаете библиотеки:
 
-pip install matplotlib python-opencv pyqt6
+pip install matplotlib opencv-python pyqt6
