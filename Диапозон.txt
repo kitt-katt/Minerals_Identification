@@ -1,0 +1,17 @@
+Для img.png
+
+Hmin - 0/179
+Smin - 36/255
+Vmin - 124/255
+
+Hmax - 179/179 
+Smax - 65/255
+Vmax - 158/255
+
+lower_bound = np.array([0, 36, 124])
+upper_bound = np.array([360, 65, 158])
+
+image_path = "img.png"  # Укажите путь к вашему изображению
+h_range = (0, 180)   # Диапазон H
+s_range = (36, 65)   # Диапазон S
+v_range = (124, 158) # Диапазон V
