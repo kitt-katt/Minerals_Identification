@@ -1,0 +1,107 @@
+import cv2
+import numpy as np
+import time
+from sklearn.cluster import AffinityPropagation
+import matplotlib.pyplot as plt
+from matplotlib import colors
+
+def measure_affinity_propagation_time(image_path, h_range, s_range, v_range):
+    """
+    Замеряет время работы Affinity Propagation для пикселей в заданном диапазоне HSV на изображении.
+    Визуализирует результаты кластеризации и матрицу сходства.
+
+    Args:
+        image_path (str): Путь к изображению.
+        h_range (tuple): Диапазон значений Hue (min, max).
+        s_range (tuple): Диапазон значений Saturation (min, max).
+        v_range (tuple): Диапазон значений Value (min, max).
+
+    Returns:
+        tuple: (Время выполнения Affinity Propagation в секундах, метки кластеров,
+                матрица сходства, координаты, центры кластеров)
+    """
+
+    try:
+        # 1. Загрузка и преобразование изображения
+        img = cv2.imread(image_path)
+        if img is None:
+            raise ValueError(f"Не удалось загрузить изображение по пути: {image_path}")
+
+        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        # 2. Создание маски для выбранного диапазона HSV
+        lower_bound = np.array([h_range[0], s_range[0], v_range[0]])
+        upper_bound = np.array([h_range[1], s_range[1], v_range[1]])
+        mask = cv2.inRange(hsv_img, lower_bound, upper_bound)
+
+        # 3. Получение координат пикселей, соответствующих маске
+        coordinates = np.column_stack(np.where(mask > 0))  # (row, col)
+
+        # 4. Извлечение цветовых значений HSV для соответствующих пикселей
+        if len(coordinates) > 0:
+            hsv_values = hsv_img[coordinates[:, 0], coordinates[:, 1]]
+            # Преобразование типа данных для экономии памяти
+            hsv_values = hsv_values.astype(np.float32)  #  уменьшение объема используемой памяти
+        else:
+            print("В заданном диапазоне HSV не найдено пикселей.")
+            return 0, None, None, None, None
+
+        # 5. Affinity Propagation
+        start_time = time.time()
+        afprop = AffinityPropagation(random_state=0).fit(hsv_values)
+        end_time = time.time()
+
+        execution_time = end_time - start_time
+        labels = afprop.labels_
+        similarity_matrix = afprop.affinity_matrix_
+        cluster_centers_indices = afprop.cluster_centers_indices_
+        cluster_centers = hsv_values[cluster_centers_indices]
+
+        return execution_time, labels, similarity_matrix, coordinates, cluster_centers
+
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
+        return 0, None, None, None, None
+
+# --- Пример использования ---
+if __name__ == "__main__":
+    image_path = ".env/kern_4.jpg"  # Замените на путь к вашему изображению
+    h_range = (37, 121)
+    s_range = (26, 130)
+    v_range = (32, 116)
+
+    execution_time, labels, similarity_matrix, coordinates, cluster_centers = measure_affinity_propagation_time(image_path, h_range, s_range, v_range)
+
+    if execution_time > 0:
+        print(f"Время выполнения Affinity Propagation: {execution_time:.4f} секунд")
+        print(f"Метки кластеров: {labels}")
+
+        if similarity_matrix is not None:
+            print("Форма матрицы сходства:", similarity_matrix.shape)
+            plt.figure(figsize=(8, 6))
+            plt.imshow(similarity_matrix, cmap='viridis')
+            plt.colorbar(label='Сходство')
+            plt.title('Матрица Сходства Affinity Propagation')
+            plt.xlabel('Индекс пикселя')
+            plt.ylabel('Индекс пикселя')
+            plt.show()
+
+        if coordinates is not None and labels is not None:
+            plt.figure(figsize=(10, 8))
+            # Отображаем изображение
+            plt.imshow(cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB))
+            # Отображаем кластеры
+            plt.scatter(coordinates[:, 1], coordinates[:, 0], c=labels, cmap='viridis', s=5)
+            # Выделяем центры кластеров
+            if cluster_centers is not None:
+                cluster_center_coords = coordinates[afprop.cluster_centers_indices_]
+                plt.scatter(cluster_center_coords[:, 1], cluster_center_coords[:, 0],
+                            marker='x', s=200, linewidth=3, color='red', label='Центры Кластеров')
+
+            plt.title('Кластеры Affinity Propagation на Изображении')
+            plt.xlabel('X (Столбец)')
+            plt.ylabel('Y (Строка)')
+            plt.legend()
+            plt.show()
+    else:
+        print("Affinity Propagation не был выполнен из-за ошибки или отсутствия пикселей в заданном диапазоне.")
