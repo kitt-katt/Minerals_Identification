@@ -56,8 +56,22 @@ def creating_density_graph_three_lines(list_hue, list_saturation, list_value):
     x = [i for i in range(0,256)]
     plt.title("HSV")
     plt.plot(x,count_hue_channel,color = "red")
-    plt.plot(x,count_saturation_channel,color = "black")
+    plt.plot(x,count_saturation_channel,color = "green")
     plt.plot(x,count_value_channel,color = "blue")
+
+def creating_density_graph_three_lines_procent(list_hue, list_saturation, list_value):
+    count_hue_channel, count_saturation_channel, count_value_channel = [], [], []
+    len(list_hue)
+    for i in range(0,256):
+       count_hue_channel.append(100 * list_hue.count(i)/ len(list_hue))
+       count_saturation_channel.append(100 * list_saturation.count(i)/ len(list_saturation))
+       count_value_channel.append(100 * list_value.count(i) / len(list_value))
+    x = [i for i in range(0,256)]
+    plt.title("HSV")
+    plt.plot(x, count_hue_channel, color = "red" )
+    plt.plot(x, count_saturation_channel, color = "green")
+    plt.plot(x, count_value_channel, color = "blue")
+    plt.show()
 #3D
 def creating_point_3d_model_hsv(list_hue, list_saturation, list_value, legend):
     fig = plt.figure()
@@ -73,5 +87,5 @@ def creating_point_3d_model_hsv(list_hue, list_saturation, list_value, legend):
 image = cv2.imread("Urtit2.jpg")
 imageHSV = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 list_hue, list_saturation, list_value = threshold_method(applying_mask(imageHSV,0,19,20,169,60,205),5)
-creating_point_3d_model_hsv(list_hue,list_saturation,list_value, "пример")
+creating_density_graph_three_lines_procent(list_hue,list_saturation,list_value)
 
