@@ -1,0 +1,112 @@
+import cv2
+import numpy as np
+import time
+from sklearn.cluster import AffinityPropagation
+import random
+import matplotlib.pyplot as plt
+
+def measure_affinity_propagation_time(image_path, h_range, s_range, v_range, num_samples=1000):
+    """
+    Замеряет время работы Affinity Propagation для пикселей в заданном диапазоне HSV на изображении.
+    Визуализирует результаты кластеризации и матрицу сходства.
+
+    Args:
+        image_path (str): Путь к изображению.
+        h_range (tuple): Диапазон значений Hue (min, max).
+        s_range (tuple): Диапазон значений Saturation (min, max).
+        v_range (tuple): Диапазон значений Value (min, max).
+        num_samples (int): Максимальное количество пикселей для кластеризации (для снижения требований к памяти).
+
+    Returns:
+        tuple: (Время выполнения Affinity Propagation в секундах, метки кластеров (None, если произошла ошибка))
+    """
+
+    try:
+        # 1. Загрузка и преобразование изображения
+        img = cv2.imread(image_path)
+        if img is None:
+            raise ValueError(f"Не удалось загрузить изображение по пути: {image_path}")
+
+        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+
+        # 2. Создание маски для выбранного диапазона HSV
+        lower_bound = np.array([h_range[0], s_range[0], v_range[0]])
+        upper_bound = np.array([h_range[1], s_range[1], v_range[1]])
+        mask = cv2.inRange(hsv_img, lower_bound, upper_bound)
+
+        # 3. Получение координат пикселей, соответствующих маске
+        coordinates = np.column_stack(np.where(mask > 0))  # (row, col)
+
+        # 4. Извлечение цветовых значений HSV для соответствующих пикселей
+        if len(coordinates) > 0:
+            # Выберем случайным образом, например, num_samples пикселей
+            num_samples = min(num_samples, len(coordinates))  # Убедимся, что не запрашиваем больше, чем есть
+            random_indices = random.sample(range(len(coordinates)), num_samples)
+            sampled_coordinates = coordinates[random_indices]
+            hsv_values = hsv_img[sampled_coordinates[:, 0], sampled_coordinates[:, 1]]
+        else:
+            print("В заданном диапазоне HSV не найдено пикселей.")
+            return 0, None
+
+        # 5. Affinity Propagation
+        start_time = time.time()
+        afprop = AffinityPropagation(random_state=0, preference=-50).fit(hsv_values) #  preference регулирует количество кластеров
+        end_time = time.time()
+
+        execution_time = end_time - start_time
+        labels = afprop.labels_
+        similarity_matrix = afprop.affinity_matrix_  # матрица сходства
+
+        print(f"Найдено {len(set(labels))} кластеров")  # Печатаем количество кластеров
+
+        # 6. Визуализация результатов
+        plt.figure(figsize=(12, 6))
+
+        # a. Визуализация кластеров (Scatter Plot)
+        plt.subplot(1, 2, 1)  # 1 row, 2 columns, first plot
+        unique_labels = np.unique(labels)
+        colors = plt.cm.jet(np.linspace(0, 1, len(unique_labels)))  # Цвета для кластеров
+        for k, col in zip(unique_labels, colors):
+            cluster_data = hsv_values[labels == k]
+            plt.scatter(cluster_data[:, 1], cluster_data[:, 2], color=col, label=f"Cluster {k}") # Используем S и V для графика
+
+        plt.title("Affinity Propagation Clusters (S vs V)")
+        plt.xlabel("Saturation")
+        plt.ylabel("Value")
+        plt.legend()
+        plt.grid(True)
+
+        # b. Визуализация матрицы сходства
+        plt.subplot(1, 2, 2)  # 1 row, 2 columns, second plot
+        plt.imshow(similarity_matrix, cmap='viridis')  # Используем "viridis" или другую подходящую цветовую схему
+        plt.title("Affinity Matrix")
+        plt.colorbar(label="Similarity")
+        plt.xlabel("Data Point Index")
+        plt.ylabel("Data Point Index")
+
+        plt.tight_layout() #  Предотвращает перекрытия графиков
+        plt.show()
+
+
+        return execution_time, labels
+
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
+        return 0, None
+
+# --- Пример использования ---
+if __name__ == "__main__":
+    image_path = ".env/hhw3ZUyPeFc.jpg"  # Замените на путь к вашему изображению
+    h_range = (37, 121)
+    s_range = (26, 130)
+    v_range = (32, 116)
+    num_samples = 500  #  Уменьшаем количество пикселей для обработки
+
+    execution_time, labels = measure_affinity_propagation_time(image_path, h_range, s_range, v_range, num_samples)
+
+    if execution_time > 0:
+        print(f"Время выполнения Affinity Propagation: {execution_time:.4f} секунд")
+        print(f"Метки кластеров (первые 10): {labels[:10]}") #  Выводим только часть меток, чтобы не загромождать
+
+    else:
+        print("Affinity Propagation не был выполнен из-за ошибки или отсутствия пикселей в заданном диапазоне.")
