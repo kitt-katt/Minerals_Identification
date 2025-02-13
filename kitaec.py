@@ -12,19 +12,17 @@ VChannel = []
 HeightWidthChannel = []
 d = {}
 width, height, _ = image.shape
+imageHSV = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
 # Фильтрация пикселей по условию
 for i in range(width):
     for j in range(height):
-        pixel = image[i, j]
-        B = int(pixel[0])
-        G = int(pixel[1])
-        R = int(pixel[2])
-        if (B in range(52, 97)) and (G in range(52, 78)) and (R in range(78, 120)):
+        pixel = imageHSV[i, j]
+        H = int(pixel[0])
+        S = int(pixel[1])
+        V = int(pixel[2])
+        if (H in range(37, 121)) and (S in range(26, 130)) and (V in range(32, 116)):
             HeightWidthChannel.append((i, j))  # Сохраняем координаты (i, j)
-
-# Преобразуем изображение в HSV
-imageHSV = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
 # Сбор данных для кластеризации
 for i in range(width):
