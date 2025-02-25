@@ -1,0 +1,81 @@
+import cv2
+import numpy as np
+import time
+from sklearn.cluster import AffinityPropagation
+import random
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D  
+
+def measure_affinity_propagation_time(image_path, hsv_ranges, num_samples=1000):
+    try:
+        img = cv2.imread(image_path)
+        if img is None:
+            raise ValueError(f"Не удалось загрузить изображение по пути: {image_path}")
+        
+        hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        total_execution_time = 0  # Общее время выполнения
+
+        # Создаем 3D график
+        fig = plt.figure(figsize=(12, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Цвета для каждого диапазона
+        colors = plt.cm.jet(np.linspace(0, 1, len(hsv_ranges)))
+
+        for idx, (h_range, s_range, v_range) in enumerate(hsv_ranges):
+            lower_bound = np.array([h_range[0], s_range[0], v_range[0]])
+            upper_bound = np.array([h_range[1], s_range[1], v_range[1]])
+            mask = cv2.inRange(hsv_img, lower_bound, upper_bound)
+            coordinates = np.column_stack(np.where(mask > 0))  # (row, col)
+
+            if len(coordinates) > 0:
+                num_samples = min(num_samples, len(coordinates))  
+                random_indices = random.sample(range(len(coordinates)), num_samples)
+                sampled_coordinates = coordinates[random_indices]
+                hsv_values = hsv_img[sampled_coordinates[:, 0], sampled_coordinates[:, 1]]
+
+                start_time = time.time()
+                afprop = AffinityPropagation(random_state=0, preference=-50).fit(hsv_values) 
+                end_time = time.time()
+
+                execution_time = end_time - start_time
+                total_execution_time += execution_time
+                labels = afprop.labels_
+
+                print(f"Для диапазона H: {h_range}, S: {s_range}, V: {v_range} найдено {len(set(labels))} кластеров")
+
+                # Отображаем все точки этого диапазона одним цветом
+                ax.scatter(hsv_values[:, 0], hsv_values[:, 1], hsv_values[:, 2], 
+                           color=colors[idx], label=f"Диапазон H: {h_range}, S: {s_range}, V: {v_range}", s=20)
+
+            else:
+                print(f"В заданном диапазоне H: {h_range}, S: {s_range}, V: {v_range} не найдено пикселей")
+
+        ax.set_title("Светофор (H, S, V) для нескольких диапазонов")
+        ax.set_xlabel("Hue")
+        ax.set_ylabel("Saturation")
+        ax.set_zlabel("Value")
+        ax.legend()
+        ax.grid(True)
+
+        plt.show()  # Отображаем график
+
+        return total_execution_time
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
+        return 0
+
+if __name__ == "__main__":
+    image_path = ".env/Cvetofor.jpg"  
+    hsv_ranges = [
+        ((0, 7), (105, 255), (77, 255)),
+        ((8, 26), (93, 255), (83, 255)),
+        ((58, 88), (150, 255), (77, 255)),
+        ((172, 180), (105, 255), (89, 255))  # Добавление нескольких диапазонов
+    ]
+    num_samples = 1  
+    execution_time = measure_affinity_propagation_time(image_path, hsv_ranges, num_samples)
+    if execution_time > 0:
+        print(f"Общее время выполнения: {execution_time:.4f} секунд")
+    else:
+        print("Affinity Propagation не был выполнен из-за ошибки или отсутствия пикселей в заданном диапазоне.")
