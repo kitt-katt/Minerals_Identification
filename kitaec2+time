@@ -97,12 +97,14 @@ ax.set_title('3D визуализация кластеризации метод�
 # Легенда
 ax.legend()
 
-# Показать график
-plt.show()
-
 # Конец замера времени
 end_time = time.time()
 
 # Вывод времени выполнения
 execution_time = end_time - start_time
 print(f"Время выполнения программы: {execution_time:.2f} секунд")
+
+# Показать график
+plt.show()
+
+
