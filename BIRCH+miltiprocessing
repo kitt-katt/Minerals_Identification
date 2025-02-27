@@ -1,0 +1,199 @@
+import cv2
+import numpy as np
+from sklearn.cluster import Birch
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import time
+import random
+from multiprocessing import Pool, cpu_count, freeze_support
+
+def create_hsv_mask(hsv_image, h_range, s_range, v_range):
+    """
+    Создает бинарную маску на основе диапазонов HSV.
+    """
+    h_min, h_max = h_range
+    s_min, s_max = s_range
+    v_min, v_max = v_range
+
+    # Создание масок для каждого канала
+    mask_h = cv2.inRange(hsv_image[:, :, 0], h_min, h_max)
+    mask_s = cv2.inRange(hsv_image[:, :, 1], s_min, s_max)
+    mask_v = cv2.inRange(hsv_image[:, :, 2], v_min, v_max)
+
+    # Комбинирование масок
+    mask = cv2.bitwise_and(mask_h, mask_s)
+    mask = cv2.bitwise_and(mask, mask_v)
+
+    return mask
+
+def process_chunk(args):
+    """
+    Обрабатывает часть изображения.
+    """
+    start_row, end_row, hsv_image, h_range, s_range, v_range = args
+    chunk = hsv_image[start_row:end_row, :]
+    mask = create_hsv_mask(chunk, h_range, s_range, v_range)
+    pixels = chunk[mask > 0]
+    return pixels
+
+def cluster_hsv_with_birch(image, h_range, s_range, v_range, n_clusters=5, min_cluster_size=0):
+    """
+    Применяет кластеризацию BIRCH к изображению в HSV.
+    """
+    # Преобразование в HSV
+    hsv_image = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    # Разделение изображения на части для многопроцессорной обработки
+    num_processes = cpu_count()
+    chunk_size = hsv_image.shape[0] // num_processes
+    chunks = [(i * chunk_size, (i + 1) * chunk_size if i != num_processes - 1 else hsv_image.shape[0], hsv_image, h_range, s_range, v_range) for i in range(num_processes)]
+
+    # Многопроцессорная обработка
+    with Pool(num_processes) as pool:
+        results = pool.map(process_chunk, chunks)
+
+    # Объединение результатов
+    pixels = np.vstack(results)
+
+    # Проверка, что есть пиксели для кластеризации
+    if pixels.shape[0] == 0:
+        raise ValueError("Маска не содержит пикселей для кластеризации.")
+
+    # Применение BIRCH
+    birch = Birch(n_clusters=n_clusters)
+    birch.fit(pixels)
+    labels = birch.labels_
+
+    # Удаление маленьких кластеров
+    if min_cluster_size > 0:
+        unique_labels, counts = np.unique(labels, return_counts=True)
+        valid_labels = unique_labels[counts >= min_cluster_size]
+        mask_filtered = np.isin(labels, valid_labels)
+        pixels = pixels[mask_filtered]
+        labels = labels[mask_filtered]
+
+    # Вычисление центров кластеров
+    centers = np.zeros((n_clusters, 3), dtype=np.uint8)
+    for i in range(n_clusters):
+        if np.any(labels == i):
+            centers[i] = np.mean(pixels[labels == i], axis=0).astype(np.uint8)
+
+    # Замена пикселей под маской на центры кластеров
+    segmented_hsv = hsv_image.copy()
+    mask = create_hsv_mask(hsv_image, h_range, s_range, v_range)
+    segmented_hsv[mask > 0] = 0  # Очищаем маску
+    for i in range(n_clusters):
+        if np.any(labels == i):
+            segmented_hsv[mask > 0][labels == i] = centers[i]
+
+    # Преобразование обратно в BGR
+    result = cv2.cvtColor(segmented_hsv, cv2.COLOR_HSV2BGR)
+
+    return result, mask, pixels, labels
+
+def visualize_images(original, mask, clustered):
+    """
+    Визуализирует исходное изображение, маску и результат кластеризации.
+    """
+    plt.figure(figsize=(15, 5))
+
+    # Исходное изображение
+    plt.subplot(1, 3, 1)
+    plt.imshow(cv2.cvtColor(original, cv2.COLOR_BGR2RGB))
+    plt.title('Original Image')
+    plt.axis('off')
+
+    # Маска
+    plt.subplot(1, 3, 2)
+    plt.imshow(mask, cmap='gray')
+    plt.title('Mask')
+    plt.axis('off')
+
+    # Результат кластеризации
+    plt.subplot(1, 3, 3)
+    plt.imshow(cv2.cvtColor(clustered, cv2.COLOR_BGR2RGB))
+    plt.title('Clustered Image')
+    plt.axis('off')
+
+    plt.tight_layout()
+    plt.show()
+
+def plot_3d_histogram(pixels, labels, n_clusters, title='3D Histogram of HSV Channels'):
+    """
+    Рисует 3D-гистограмму для одного диапазона HSV.
+    """
+    fig = plt.figure(figsize=(12, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Генерация случайных цветов для кластеров
+    colors = [tuple(random.random() for _ in range(3)) for _ in range(n_clusters)]
+
+    # Отображение точек для каждого кластера
+    for i in range(n_clusters):
+        cluster_points = pixels[labels == i]
+        if len(cluster_points) > 0:
+            # Отображение точек с случайным цветом
+            ax.scatter(
+                cluster_points[:, 0],  # Hue
+                cluster_points[:, 1],  # Saturation
+                cluster_points[:, 2],  # Value
+                c=[colors[i]],  # Случайный цвет для кластера
+                label=f'Cluster {i + 1} (n={len(cluster_points)})',
+                alpha=0.7,
+                s=50
+            )
+
+    # Настройка осей
+    ax.set_xlabel('Hue')
+    ax.set_ylabel('Saturation')
+    ax.set_zlabel('Value')
+    ax.set_title(title)
+    ax.legend()
+
+    plt.show()
+
+if __name__ == '__main__':
+    freeze_support()  # Требуется только для Windows
+
+    # Загрузка изображения
+    image_path = 'svetofooooor.jpeg'  # Укажите путь к вашему изображению
+    image = cv2.imread(image_path)
+
+    if image is None:
+        raise ValueError("Изображение не загружено. Проверьте путь к файлу.")
+
+    # Диапазон HSV для маски
+    h_range = (8, 26)  # желтый
+    s_range = (93, 255)
+    v_range = (83, 255)
+
+    # Количество кластеров
+    n_clusters = 5
+
+    # Минимальный размер кластера (в пикселях)
+    min_cluster_size = 50  # Удаляем кластеры с менее чем 50 пикселями
+
+    # Применяем кластеризацию для одного диапазона
+    try:
+        # Замер времени начала кластеризации
+        start_time = time.time()
+
+        # Применяем кластеризацию
+        result_image, mask, clustered_pixels, labels = cluster_hsv_with_birch(
+            image, h_range, s_range, v_range, n_clusters=n_clusters, min_cluster_size=min_cluster_size
+        )
+
+        # Замер времени окончания кластеризации
+        end_time = time.time()
+        elapsed_time = end_time - start_time
+
+        # Выводим время кластеризации
+        print(f"Время кластеризации: {elapsed_time:.4f} секунд")
+
+        # Визуализация изображений
+        visualize_images(image, mask, result_image)
+
+        # Построение 3D-гистограммы
+        plot_3d_histogram(clustered_pixels, labels, n_clusters, title='3D Histogram of HSV Channels (Red Range)')
+    except Exception as e:
+        print(f"Произошла ошибка: {e}")
