@@ -1,0 +1,144 @@
+import cv2
+import numpy as np
+from sklearn.cluster import KMeans
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+import time
+from multiprocessing import Pool, cpu_count, freeze_support
+
+
+# Функция для фильтрации пикселей
+def filter_pixel(pixel):
+    H, S, V = pixel
+    return (8 <= H <= 26) and (93 <= S <= 255) and (83 <= V <= 225)
+
+
+# Функция для обработки части изображения
+def process_chunk(args):
+    start_row, end_row, imageHSV = args
+    local_d = {}
+    local_height_width_channel = []
+    for i in range(start_row, end_row):
+        for j in range(imageHSV.shape[1]):
+            pixel = imageHSV[i, j]
+            if filter_pixel(pixel):
+                local_height_width_channel.append((i, j))
+                key = tuple(pixel)
+                if key in local_d:
+                    local_d[key] += 1
+                else:
+                    local_d[key] = 1
+    return local_d, local_height_width_channel
+
+
+# Разделение изображения на части для многопроцессорной обработки
+def split_image(imageHSV, num_chunks):
+    chunk_size = imageHSV.shape[0] // num_chunks
+    chunks = []
+    for i in range(num_chunks):
+        start_row = i * chunk_size
+        end_row = (i + 1) * chunk_size if i != num_chunks - 1 else imageHSV.shape[0]
+        chunks.append((start_row, end_row, imageHSV))
+    return chunks
+
+
+# Основная функция для многопроцессорной обработки
+def parallel_process(imageHSV, num_processes):
+    chunks = split_image(imageHSV, num_processes)
+    with Pool(num_processes) as pool:
+        results = pool.map(process_chunk, chunks)
+
+    # Объединяем результаты
+    global_d = {}
+    global_height_width_channel = []
+    for local_d, local_height_width_channel in results:
+        global_height_width_channel.extend(local_height_width_channel)
+        for key, value in local_d.items():
+            if key in global_d:
+                global_d[key] += value
+            else:
+                global_d[key] = value
+    return global_d, global_height_width_channel
+
+
+# Основной блок
+if __name__ == '__main__':
+    freeze_support()  # Требуется только для Windows
+
+    # Начало замера времени
+    start_time = time.time()
+
+    # Загрузка изображения
+    image = cv2.imread("svetofooooor.jpeg")
+    width, height, _ = image.shape
+
+    # Перевод изображения в HSV
+    imageHSV = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    # Применяем фильтрацию ко всем пикселям с использованием многопроцессорности
+    num_processes = cpu_count()  # Используем все доступные ядра
+    d, HeightWidthChannel = parallel_process(imageHSV, num_processes)
+
+    # Преобразуем данные в формат, подходящий для k-means
+    pixels = np.array(list(d.keys()))  # Массив кортежей (H, S, V)
+    counts = np.array(list(d.values()))  # Массив количеств
+
+    # Повторяем каждый пиксель count раз
+    pixel_values = np.repeat(pixels, counts, axis=0)
+
+    # Задаем количество кластеров
+    k = 5  # Увеличиваем количество кластеров
+
+    # Применяем метод k-средних
+    kmeans = KMeans(n_clusters=k, random_state=42)
+    kmeans.fit(pixel_values)
+
+    # Получаем центры кластеров и метки для каждого пикселя
+    centroids = kmeans.cluster_centers_
+    labels = kmeans.labels_
+
+    # Подсчёт количества точек
+    total_points = len(pixel_values)  # Общее количество точек
+    cluster_counts = np.bincount(labels)  # Количество точек в каждом кластере
+
+    # Вывод информации о количестве точек
+    print(f"Общее количество точек: {total_points}")
+    for i in range(k):
+        print(f"Кластер {i}: {cluster_counts[i]} точек")
+
+    # Визуализация в 3D
+    fig = plt.figure(figsize=(10, 8))
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Цвета для каждого кластера
+    colors = ['r', 'g', 'b', 'c', 'm', 'y', 'k', 'orange', 'purple', 'brown']
+
+    # Отображаем точки для каждого кластера
+    for i in range(k):
+        cluster_points = pixel_values[labels == i]
+        ax.scatter(cluster_points[:, 0], cluster_points[:, 1], cluster_points[:, 2],
+                   c=colors[i], label=f'Кластер {i} ({cluster_counts[i]} точек)', s=5)
+
+    # Отображаем центры кластеров
+    ax.scatter(centroids[:, 0], centroids[:, 1], centroids[:, 2],
+               c='black', marker='X', s=200, label='Центры кластеров')
+
+    # Настройка осей
+    ax.set_xlabel('H (Hue)')
+    ax.set_ylabel('S (Saturation)')
+    ax.set_zlabel('V (Value)')
+    ax.set_title('K-means для маски желтого цвета')
+
+    # Легенда
+    ax.legend()
+
+    # Конец замера времени
+    end_time = time.time()
+
+    # Вывод времени выполнения
+    execution_time = end_time - start_time
+    print(f"Время выполнения программы: {execution_time:.2f} секунд")
+
+    # Показать график
+    plt.show()
+
