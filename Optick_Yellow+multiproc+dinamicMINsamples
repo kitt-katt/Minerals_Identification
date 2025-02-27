@@ -1,0 +1,93 @@
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from sklearn.cluster import OPTICS
+import time
+from multiprocessing import Pool, cpu_count, freeze_support
+from joblib import Parallel, delayed
+
+
+def usingMask(imageHSV, hue_min, hue_max, saturation_min, saturation_max, value_min, value_max):
+    # Преобразуем изображение в массив numpy
+    pixels = imageHSV.reshape(-1, 3)
+
+    # Фильтруем пиксели с использованием numpy
+    mask = ((pixels[:, 0] >= hue_min) & (pixels[:, 0] <= hue_max) &
+            (pixels[:, 1] >= saturation_min) & (pixels[:, 1] <= saturation_max) &
+            (pixels[:, 2] >= value_min) & (pixels[:, 2] <= value_max))
+
+    filteredArray = pixels[mask].tolist()
+    return filteredArray
+
+
+def cluster_block(block):
+    # Если блок пустой или содержит меньше 2 точек, возвращаем массив с метками шума (-1)
+    if len(block) < 2:
+        return np.full(len(block), -1)  # Все точки помечаются как шум
+
+    # Динамически вычисляем min_samples
+    min_samples = max(2, min(100, len(block) // 10))  # Пример: min_samples = 10% от размера блока, но не менее 2
+    optics = OPTICS(min_samples=min_samples, xi=0.1, min_cluster_size=0.02)
+    return optics.fit_predict(block)
+
+
+def main():
+    # Замеряем время начала выполнения программы
+    start_time = time.time()
+
+    # Чтение изображения и преобразование в HSV
+    image = cv2.imread("svetofooooor.jpeg")
+    imageInHSV = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    # Параметры для фильтрации цвета
+    hue_min, hue_max = 8, 26
+    sat_min, sat_max = 93, 255
+    val_min, val_max = 83, 255
+
+    # Получаем отфильтрованные данные
+    data = usingMask(imageInHSV, hue_min, hue_max, sat_min, sat_max, val_min, val_max)
+    data_np = np.array(data)
+
+    # Разбиваем данные на блоки для параллельной кластеризации
+    block_size = max(1, len(data_np) // cpu_count())  # Убедимся, что block_size >= 1
+    blocks = [data_np[i:i + block_size] for i in range(0, len(data_np), block_size)]
+
+    # Параллельная кластеризация
+    results = Parallel(n_jobs=cpu_count())(delayed(cluster_block)(block) for block in blocks)
+
+    # Объединяем результаты
+    cluster_labels = np.concatenate(results)
+
+    # Создаем 3D график
+    fig = plt.figure()
+    ax = fig.add_subplot(111, projection='3d')
+
+    # Визуализируем данные с разными цветами для каждого кластера
+    for cluster_id in np.unique(cluster_labels):
+        if cluster_id != -1:  # Игнорируем шум (метка -1)
+            points = data_np[cluster_labels == cluster_id]
+            cluster_size = len(points)  # Количество точек в текущем кластере
+            ax.scatter(points[:, 0], points[:, 1], points[:, 2], label=f"Cluster {cluster_id} ({cluster_size} points)")
+
+    # Добавляем подписи осей
+    ax.set_xlabel('Hue')
+    ax.set_ylabel('Saturation')
+    ax.set_zlabel('Value')
+
+    # Заголовок графика
+    plt.title('OPTICS для желтого цвета', fontsize=20, fontweight="bold")
+    plt.legend(fontsize=15)
+
+    # Выводим время работы программы
+    end_time = time.time()
+    elapsed_time = end_time - start_time
+    print(f"Время работы программы: {elapsed_time:.2f} секунд")
+
+    # Показать график
+    plt.show()
+
+
+if __name__ == '__main__':
+    freeze_support()  # Необходимо для Windows
+    main()
