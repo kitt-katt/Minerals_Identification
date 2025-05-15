@@ -1,0 +1,251 @@
+import cv2
+import numpy as np
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
+from sklearn.cluster import KMeans
+import pandas as pd
+import os
+from ipywidgets import interact, IntSlider, FloatSlider
+import ipywidgets as widgets
+from IPython.display import display
+
+
+class HSVClusterAnalyzer:
+    def __init__(self, image_path):
+        self.image_path = image_path
+        self.image = cv2.imread(image_path)
+        if self.image is None:
+            raise ValueError("Изображение не загружено, проверьте путь")
+
+        self.imageHSV = cv2.cvtColor(self.image, cv2.COLOR_BGR2HSV)
+        self.height, self.width = self.image.shape[:2]
+
+        # Параметры по умолчанию
+        self.target_h_range = (28, 159)
+        self.target_s_range = (0, 73)
+        self.target_v_range = (0, 153)
+        self.n_clusters = 6
+        self.target_threshold = 0.8
+
+        # Результаты
+        self.df = None
+        self.cluster_stats = None
+
+    def is_in_target_range(self, pixel):
+        H, S, V = pixel
+        return (self.target_h_range[0] <= H <= self.target_h_range[1] and
+                self.target_s_range[0] <= S <= self.target_s_range[1] and
+                self.target_v_range[0] <= V <= self.target_v_range[1])
+
+    def analyze(self):
+        # Получаем все пиксели
+        hsv_pixels = self.imageHSV.reshape((-1, 3))
+
+        # Применяем K-means
+        kmeans = KMeans(n_clusters=self.n_clusters, random_state=42)
+        labels = kmeans.fit_predict(hsv_pixels)
+
+        # Создаем DataFrame с результатами
+        self.df = pd.DataFrame(hsv_pixels, columns=['H', 'S', 'V'])
+        self.df['cluster'] = labels
+        self.df['row'] = np.repeat(np.arange(self.height), self.width)
+        self.df['col'] = np.tile(np.arange(self.width), self.height)
+
+        # Определяем, какие точки в целевом диапазоне
+        self.df['in_target'] = self.df.apply(lambda row: self.is_in_target_range((row['H'], row['S'], row['V'])),
+                                             axis=1)
+
+        # Анализируем кластеры
+        self._analyze_clusters()
+
+    def _analyze_clusters(self):
+        # Считаем статистику по кластерам
+        cluster_stats = []
+        for cluster in range(self.n_clusters):
+            cluster_data = self.df[self.df['cluster'] == cluster]
+            total_points = len(cluster_data)
+            target_points = len(cluster_data[cluster_data['in_target']])
+
+            ratio = target_points / total_points if total_points > 0 else 0
+            is_target = ratio >= self.target_threshold
+
+            cluster_stats.append({
+                'cluster': cluster,
+                'total_points': total_points,
+                'target_points': target_points,
+                'non_target_points': total_points - target_points,
+                'target_ratio': ratio,
+                'is_target': is_target
+            })
+
+        self.cluster_stats = pd.DataFrame(cluster_stats)
+
+    def visualize_clusters(self):
+        fig = plt.figure(figsize=(15, 12))
+
+        # 3D визуализация кластеров (исправленный get_cmap)
+        ax1 = fig.add_subplot(221, projection='3d')
+        colors = plt.colormaps['tab20'].resampled(self.n_clusters)
+
+        # Получаем список целевых кластеров
+        self.target_clusters = self.cluster_stats[self.cluster_stats['is_target']]['cluster'].tolist()
+
+        for cluster in range(self.n_clusters):
+            cluster_data = self.df[self.df['cluster'] == cluster]
+            label = f'Кл.{cluster}'
+            if cluster in self.target_clusters:
+                label += '(Ц)'
+
+            ax1.scatter(
+                cluster_data['H'], cluster_data['S'], cluster_data['V'],
+                color=colors(cluster),
+                s=5, alpha=0.5,
+                label=label
+            )
+
+        ax1.set_xlabel('H (Hue)')
+        ax1.set_ylabel('S (Saturation)')
+        ax1.set_zlabel('V (Value)')
+        ax1.set_title('Кластеризация в HSV пространстве')
+        ax1.legend(bbox_to_anchor=(1.05, 1), loc='upper left', fontsize='small')
+
+        # Гистограмма распределения точек
+        ax2 = fig.add_subplot(222)
+
+        # Категории точек
+        categories = [
+            'Цель=цель кл',
+            'Цель=не цель кл',
+            'Не цель=цель класт',
+            'не цель=не цель класт'
+        ]
+
+        # Подсчет количества для каждой категории
+        target_in_target = len(self.df[(self.df['in_target']) & (self.df['cluster'].isin(self.target_clusters))])
+        target_in_non_target = len(self.df[(self.df['in_target']) & (~self.df['cluster'].isin(self.target_clusters))])
+        non_target_in_target = len(self.df[(~self.df['in_target']) & (self.df['cluster'].isin(self.target_clusters))])
+        non_target_in_non_target = len(
+            self.df[(~self.df['in_target']) & (~self.df['cluster'].isin(self.target_clusters))])
+
+        counts = [
+            target_in_target,
+            target_in_non_target,
+            non_target_in_target,
+            non_target_in_non_target
+        ]
+
+        total_points = len(self.df)
+        correct_classification = target_in_target + non_target_in_non_target
+        correct_percentage = (correct_classification / total_points) * 100
+
+        bars = ax2.bar(categories, counts, color=['green', 'lightgreen', 'red', 'pink'])
+        ax2.set_title('Распределение точек по категориям')
+        ax2.set_ylabel('Количество точек')
+
+        # Добавляем аннотацию с общей статистикой
+        stats_text = (f"Точно классифицировано: {correct_classification} ({correct_percentage:.1f}%)\n"
+                      f"Цель=Цель: {target_in_target} | Промах=Промах: {non_target_in_non_target}\n"
+                      f"Ошибки: {target_in_non_target + non_target_in_target}")
+
+        ax2.annotate(stats_text, xy=(0.5, 0.95), xycoords='axes fraction',
+                     ha='center', va='top', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+        # Добавляем значения на столбцы
+        for bar in bars:
+            height = bar.get_height()
+            ax2.annotate(f'{height}',
+                         xy=(bar.get_x() + bar.get_width() / 2, height),
+                         xytext=(0, 3),
+                         textcoords="offset points",
+                         ha='center', va='bottom')
+
+        # Статистика по кластерам (в одну строку)
+        ax3 = fig.add_subplot(223)
+        ax3.axis('off')
+
+        cluster_info = []
+        for _, row in self.cluster_stats.iterrows():
+            status = "Ц" if row['is_target'] else "Н"
+            info = (f"Кл.{row['cluster']}({status}): {row['total_points']}т. "
+                    f"({row['target_points']}ц, {row['target_ratio']:.0%}) | ")
+            cluster_info.append(info)
+
+        # Разбиваем на строки для лучшей читаемости
+        cluster_text = ''.join(cluster_info)
+        wrapped_text = '\n'.join([cluster_text[i:i + 100] for i in range(0, len(cluster_text), 100)])
+
+        ax3.text(0, 1, wrapped_text,
+                 fontsize=9, va='top', ha='left', family='monospace')
+        ax3.set_title('Статистика по кластерам (Ц - целевой, Н - нецелевой)')
+
+        plt.tight_layout()
+        plt.show()
+
+    def save_results(self, output_dir="results"):
+        os.makedirs(output_dir, exist_ok=True)
+
+        # Сохраняем данные
+        base_name = os.path.splitext(os.path.basename(self.image_path))[0]
+
+        # CSV с данными
+        csv_path = os.path.join(output_dir, f"{base_name}_cluster_data.csv")
+        self.df.to_csv(csv_path, index=False)
+
+        # CSV со статистикой
+        stats_path = os.path.join(output_dir, f"{base_name}_cluster_stats.csv")
+        self.cluster_stats.to_csv(stats_path, index=False)
+
+        # Текстовый отчет
+        report_path = os.path.join(output_dir, f"{base_name}_report.txt")
+        with open(report_path, 'w') as f:
+            f.write(f"Анализ изображения: {base_name}\n")
+            f.write(f"Параметры анализа:\n")
+            f.write(f"- Диапазон H: {self.target_h_range}\n")
+            f.write(f"- Диапазон S: {self.target_s_range}\n")
+            f.write(f"- Диапазон V: {self.target_v_range}\n")
+            f.write(f"- Количество кластеров: {self.n_clusters}\n")
+            f.write(f"- Порог для целевого кластера: {self.target_threshold}\n\n")
+
+            f.write("Результаты:\n")
+            target_clusters = self.cluster_stats[self.cluster_stats['is_target']]
+            f.write(f"Найдено целевых кластеров: {len(target_clusters)}\n")
+
+            for _, row in self.cluster_stats.iterrows():
+                status = "Целевой" if row['is_target'] else "Нецелевой"
+                f.write(f"\nКластер {row['cluster']} ({status}):\n")
+                f.write(f"- Всего точек: {row['total_points']}\n")
+                f.write(f"- Целевых точек: {row['target_points']} ({row['target_ratio']:.1%})\n")
+
+        print(f"Результаты сохранены в папку: {output_dir}")
+        print(f"- Данные кластеризации: {csv_path}")
+        print(f"- Статистика кластеров: {stats_path}")
+        print(f"- Текстовый отчет: {report_path}")
+
+
+def run_analysis(image_path, n_clusters=6, h_min=28, h_max=159, s_min=0, s_max=73, v_min=0, v_max=153, threshold=0.8):
+    analyzer = HSVClusterAnalyzer(image_path)
+    analyzer.n_clusters = n_clusters
+    analyzer.target_h_range = (h_min, h_max)
+    analyzer.target_s_range = (s_min, s_max)
+    analyzer.target_v_range = (v_min, v_max)
+    analyzer.target_threshold = threshold
+
+    print("Выполняется анализ...")
+    analyzer.analyze()
+    analyzer.visualize_clusters()
+    analyzer.save_results()
+
+    return analyzer
+
+
+# Создаем UI элементы
+if __name__ == "__main__":
+    # Параметры анализа (можно менять вручную)
+    analyzer = run_analysis(
+        image_path="original_ t0192 926-1_121.png",  # путь к вашему изображению
+        n_clusters=6,           # число кластеров (можно увеличить для большей точности)
+        h_min=28, h_max=159,    # диапазон Hue (подберите под ваше изображение)
+        s_min=0, s_max=73,      # диапазон Saturation
+        v_min=0, v_max=153,     # диапазон Value
+        threshold=0.8           # порог для "целевого кластера" (0.8 = 80%)
+    )
